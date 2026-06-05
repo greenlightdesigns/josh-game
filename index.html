@@ -23,8 +23,32 @@
     background: linear-gradient(90deg,#ff004d,#ff8a00,#ffe600,#27c93f,#00b3ff,#7a3cff,#ff3cf0);
     background-size: 200% 100%; transition: width .15s ease-out;
   }
-  #meterLabel { color:#fff; font-weight:bold; font-size:14px; text-shadow:0 1px 3px #000; white-space:nowrap; }
-  #score { color:#fff; font-weight:bold; font-size:16px; text-shadow:0 1px 3px #000; white-space:nowrap; }
+  #meterWrap { position: relative; }
+  #meterLabel {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color:#fff; font-weight:bold; font-size:12px; text-shadow:0 1px 3px #000;
+    white-space:nowrap; pointer-events:none; letter-spacing:.3px;
+  }
+  #timer { color:#fff; font-weight:bold; font-size:18px; text-shadow:0 1px 3px #000; white-space:nowrap; min-width:62px; }
+  #timer.low { color:#ff3b3b; animation: pulseLow .5s ease-in-out infinite; }
+  @keyframes pulseLow { 50% { transform: scale(1.22); } }
+  #scoreBox { text-align:right; white-space:nowrap; min-width:58px; line-height:1.1; }
+  #score { color:#fff; font-weight:bold; font-size:18px; text-shadow:0 1px 3px #000; }
+  #best { color:#ffd86b; font-weight:bold; font-size:11px; text-shadow:0 1px 3px #000; }
+
+  /* SUPER GAY MODE flash banner */
+  #flash {
+    position: fixed; top: 36%; left: 0; right: 0; text-align:center; z-index: 9;
+    pointer-events:none; font-weight:bold; font-size: clamp(30px,8vw,64px); opacity:0;
+    color:#fff; text-shadow:0 0 18px #ff3cf0, 0 0 36px #00b3ff, 3px 3px 0 #ff004d;
+  }
+  #flash.show { animation: flashIn 1.2s ease-out; }
+  @keyframes flashIn {
+    0% { opacity:0; transform: scale(.4) rotate(-8deg); }
+    25% { opacity:1; transform: scale(1.1) rotate(2deg); }
+    70% { opacity:1; transform: scale(1) rotate(0); }
+    100% { opacity:0; transform: scale(1.4); }
+  }
 
   /* ---- Overlays ---- */
   .overlay {
@@ -53,7 +77,7 @@
   @keyframes shimmer { to { background-position: 250% 0; } }
   @keyframes bob { 50% { transform: translateY(-6px); } }
 
-  #winScreen { background: rgba(10,4,28,.0); pointer-events: none; }
+  #winScreen { background: rgba(10,4,28,.74); pointer-events: none; }
   #winScreen .inner { pointer-events: auto; }
   #winScreen h1 {
     font-size: clamp(40px, 11vw, 110px); line-height: 1; margin-bottom: 10px;
@@ -78,29 +102,30 @@
   <canvas id="game"></canvas>
 
   <div id="hud" class="hidden">
-    <div id="score">🍆 0</div>
-    <div id="meterWrap"><div id="meterFill"></div></div>
-    <div id="meterLabel">GAY-O-METER 0%</div>
+    <div id="timer">⏱️ 30</div>
+    <div id="meterWrap"><div id="meterFill"></div><span id="meterLabel">GAY-O-METER 0%</span></div>
+    <div id="scoreBox"><div id="score">🍆 0</div><div id="best">BEST 0</div></div>
   </div>
 
   <div id="titleScreen" class="overlay">
     <h1>SUPER&nbsp;GAY&nbsp;JOSH</h1>
-    <p>Josh is hungry. Help him gobble up everything in sight. 🍌🍆🌭</p>
-    <p>The more he eats, the <b>fabulous-er</b> he gets… until he goes <b>FULL RAINBOW.</b></p>
+    <p>Chomp as much as you can before the clock runs out! 🍌🍆🌭</p>
+    <p>Fill the <b>GAY-O-METER</b> to unleash <b>SUPER GAY MODE</b> — rainbow super-speed! 🌈⚡</p>
     <button id="startBtn" class="big">START CHOMPIN'</button>
-    <p class="hint">⌨️ Arrow keys / WASD &nbsp;•&nbsp; 📱 swipe to steer</p>
+    <p class="hint">⌨️ Arrow keys / WASD &nbsp;•&nbsp; 📱 swipe to steer &nbsp;•&nbsp; ⏱️ 30s rounds</p>
   </div>
 
   <div id="winScreen" class="overlay hidden">
     <div class="inner">
-      <h1>SUPER&nbsp;GAY&nbsp;JOSH!!!</h1>
-      <p>100% FABULOUS. The prophecy is complete. 🌈✨💅</p>
-      <p id="finalScore"></p>
-      <button id="againBtn" class="big">DO IT AGAIN</button>
+      <h1 id="overTitle">TIME'S UP!</h1>
+      <p id="overMsg"></p>
+      <p id="overScore"></p>
+      <button id="againBtn" class="big">PLAY AGAIN</button>
     </div>
   </div>
 
   <button id="soundBtn" title="toggle sound">🔊</button>
+  <div id="flash"></div>
 
 <script>
 (function () {
@@ -165,21 +190,32 @@
 
   // ---- game constants ----
   const FOODS = ["🍌", "🍆", "🌭", "🥒", "🌶️", "🍒", "🥖"];
-  const TARGET = 25;            // how many to eat to go FULL RAINBOW
+  const ROUND_TIME = 30;        // seconds per round
+  const CHARGE_NEEDED = 12;     // chomps to fill the meter and trigger a boost
+  const SUPER_DURATION = 6;     // seconds of rainbow super-speed mode
+  const SUPER_SPEED_MULT = 2.0; // speed multiplier while super
   const FOOD_COUNT = 7;         // simultaneous items on screen
   const PLAYER_R = () => Math.max(26, Math.min(W, H) * 0.055);
   const FOOD_R = () => PLAYER_R() * 0.7;
-  const SPEED = () => Math.max(3.2, Math.min(W, H) * 0.006);
+  const BASE_SPEED = () => Math.max(3.2, Math.min(W, H) * 0.006);
 
   // ---- game state ----
-  let state = "title";  // title | playing | win
+  let state = "title";  // title | playing | over
   const player = { x: 0, y: 0, dx: 1, dy: 0, mouth: 0, mouthDir: 1, angle: 0 };
   let facing = 1; // 1 = facing right, -1 = facing left (for the sprite)
   let foods = [];
   let particles = [];
-  let eaten = 0;
+  let score = 0;        // total chomps this round (the high-score metric)
+  let charge = 0;       // progress toward the next SUPER GAY boost
+  let timeLeft = ROUND_TIME;
+  let superUntil = 0;   // ms timestamp; super mode is on while nowMs < superUntil
+  let wasSuper = false;
+  let nowMs = 0;        // updated each frame from the rAF timestamp
   let bgHue = 270;
   let discoT = 0;
+  let highScore = 0;
+  try { highScore = parseInt(localStorage.getItem("joshHighScore"), 10) || 0; } catch (e) {}
+  function isSuper() { return nowMs < superUntil; }
 
   function rand(a, b) { return a + Math.random() * (b - a); }
 
@@ -196,10 +232,11 @@
   function resetGame() {
     player.x = W / 2; player.y = H / 2;
     player.dx = 1; player.dy = 0; player.angle = 0;
+    facing = 1;
     foods = [];
     for (let i = 0; i < FOOD_COUNT; i++) foods.push(spawnFood());
     particles = [];
-    eaten = 0;
+    score = 0; charge = 0; timeLeft = ROUND_TIME; superUntil = 0; wasSuper = false;
     updateHUD();
   }
 
@@ -277,10 +314,18 @@
   // ====================================================================
   //  Update / draw
   // ====================================================================
-  function update() {
+  function update(dt) {
     if (state !== "playing") { updateParticles(); return; }
 
-    const sp = SPEED();
+    // countdown timer
+    timeLeft -= dt;
+    const tShown = Math.max(0, Math.ceil(timeLeft));
+    timerEl.textContent = "⏱️ " + tShown;
+    timerEl.classList.toggle("low", tShown <= 5);
+    if (timeLeft <= 0) { timeLeft = 0; gameOver(); updateParticles(); return; }
+
+    const sup = isSuper();
+    const sp = BASE_SPEED() * (sup ? SUPER_SPEED_MULT : 1);
     player.x += player.dx * sp;
     player.y += player.dy * sp;
 
@@ -291,10 +336,13 @@
     if (player.y < -r) player.y = H + r;
     if (player.y > H + r) player.y = -r;
 
-    // chomp animation
-    player.mouth += 0.18 * player.mouthDir;
+    // chomp animation (chews faster while super)
+    player.mouth += (sup ? 0.32 : 0.18) * player.mouthDir;
     if (player.mouth > 1) { player.mouth = 1; player.mouthDir = -1; }
     if (player.mouth < 0) { player.mouth = 0; player.mouthDir = 1; }
+
+    // rainbow speed-trail while super
+    if (sup && Math.random() < 0.9) burst(player.x, player.y, true);
 
     // eat food
     const pr = PLAYER_R(), fr = FOOD_R();
@@ -303,20 +351,28 @@
       const d = Math.hypot(f.x - player.x, f.y - player.y);
       if (d < pr * 0.8 + fr * 0.4) {
         burst(f.x, f.y);
-        blip(440 + eaten * 18, 0.12, "square");
+        blip(440 + score * 6, 0.12, "square");
         foods.splice(i, 1);
         foods.push(spawnFood());
-        eaten++;
+        score++;
+        if (!isSuper()) {
+          charge++;
+          if (charge >= CHARGE_NEEDED) triggerSuper();
+        }
         updateHUD();
-        if (eaten >= TARGET) { win(); break; }
       }
     }
+
+    // refresh the meter the instant super-speed wears off
+    if (wasSuper && !isSuper()) updateHUD();
+    wasSuper = isSuper();
+
     updateParticles();
   }
 
-  function burst(x, y) {
+  function burst(x, y, big) {
     const colors = ["#ff004d","#ff8a00","#ffe600","#27c93f","#00b3ff","#7a3cff","#ff3cf0"];
-    const n = state === "win" ? 26 : 12;
+    const n = big ? 16 : 11;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const s = rand(1.5, 6);
@@ -337,8 +393,9 @@
 
   function draw() {
     // background
-    if (state === "win") {
-      discoT += 0.02;
+    if (isSuper()) {
+      // full disco rainbow while super
+      discoT += 0.03;
       const g = ctx.createLinearGradient(0, 0, W, H);
       const hues = [0, 40, 60, 130, 200, 270, 320];
       hues.forEach((h, i) => g.addColorStop(i / (hues.length - 1),
@@ -346,8 +403,8 @@
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, W, H);
     } else {
-      // gradually saturate as the meter fills
-      const t = eaten / TARGET;
+      // gradually saturate as the meter charges up
+      const t = charge / CHARGE_NEEDED;
       const sat = 25 + t * 55;
       const light = 14 + t * 8;
       ctx.fillStyle = `hsl(${bgHue}, ${sat}%, ${light}%)`;
@@ -392,15 +449,15 @@
 
   function drawPlayer() {
     const r = PLAYER_R();
-    const isWin = state === "win";
-    const sprite = isWin ? sprites.supergay : sprites.normal;
+    const sup = isSuper();
+    const sprite = sup ? sprites.supergay : sprites.normal;
     ctx.save();
     ctx.translate(player.x, player.y);
 
     if (sprite) {
       // draw the (background-knocked-out) sprite upright, flipped to face
       // the travel direction, with a subtle vertical "chomp" squash
-      const scale = isWin ? 1.55 : 1;
+      const scale = sup ? 1.4 : 1;
       const size = r * 2.4 * scale;
       const squash = 1 - player.mouth * 0.08;
       ctx.scale(facing, squash);
@@ -409,8 +466,8 @@
       // hand-drawn Pac-Man fallback
       ctx.rotate(player.angle);
       const open = 0.08 + player.mouth * 0.32; // radians of mouth opening
-      ctx.fillStyle = isWin ? "#ff3cf0" : "#ffe000";
-      if (isWin) {
+      ctx.fillStyle = sup ? "#ff3cf0" : "#ffe000";
+      if (sup) {
         const g = ctx.createLinearGradient(-r, -r, r, r);
         ["#ff004d","#ff8a00","#ffe600","#27c93f","#00b3ff","#7a3cff"].forEach((c, i, a) =>
           g.addColorStop(i / (a.length - 1), c));
@@ -426,28 +483,47 @@
       ctx.beginPath(); ctx.arc(r * 0.1, -r * 0.45, r * 0.12, 0, 7); ctx.fill();
     }
     ctx.restore();
-
-    if (isWin) {
-      // continuous rainbow burst from Josh during the finale
-      if (Math.random() < 0.6) burst(player.x, player.y);
-    }
   }
 
   // ---- HUD ----
   const meterFill = document.getElementById("meterFill");
   const meterLabel = document.getElementById("meterLabel");
   const scoreEl = document.getElementById("score");
+  const bestEl = document.getElementById("best");
+  const timerEl = document.getElementById("timer");
   function updateHUD() {
-    const pct = Math.min(100, Math.round((eaten / TARGET) * 100));
+    const sup = isSuper();
+    const pct = sup ? 100 : Math.min(100, Math.round((charge / CHARGE_NEEDED) * 100));
     meterFill.style.width = pct + "%";
-    meterLabel.textContent = "GAY-O-METER " + pct + "%";
-    scoreEl.textContent = "🍆 " + eaten;
+    meterLabel.textContent = sup ? "🌈 SUPER GAY MODE 🌈" : ("GAY-O-METER " + pct + "%");
+    scoreEl.textContent = "🍆 " + score;
+    bestEl.textContent = "BEST " + highScore;
   }
 
   // ---- state transitions ----
   const titleScreen = document.getElementById("titleScreen");
   const winScreen = document.getElementById("winScreen");
   const hud = document.getElementById("hud");
+  const flashEl = document.getElementById("flash");
+  const overTitle = document.getElementById("overTitle");
+  const overMsg = document.getElementById("overMsg");
+  const overScore = document.getElementById("overScore");
+
+  function flashBanner(txt) {
+    flashEl.textContent = txt;
+    flashEl.classList.remove("show");
+    void flashEl.offsetWidth; // restart the CSS animation
+    flashEl.classList.add("show");
+  }
+
+  function triggerSuper() {
+    charge = 0;
+    superUntil = nowMs + SUPER_DURATION * 1000;
+    flashBanner("🌈 SUPER GAY JOSH! 🌈");
+    fanfare();
+    for (let i = 0; i < 10; i++) burst(player.x, player.y, true);
+    updateHUD();
+  }
 
   function startGame() {
     ensureAudio();
@@ -457,13 +533,21 @@
     winScreen.classList.add("hidden");
     hud.classList.remove("hidden");
   }
-  function win() {
-    state = "win";
-    document.getElementById("finalScore").textContent = "You fed Josh " + eaten + " snacks. 🌈";
+
+  function gameOver() {
+    state = "over";
+    superUntil = 0;
+    const isBest = score > highScore;
+    if (isBest) {
+      highScore = score;
+      try { localStorage.setItem("joshHighScore", String(highScore)); } catch (e) {}
+    }
+    overTitle.textContent = "TIME'S UP!";
+    overMsg.innerHTML = isBest ? "🏆 NEW HIGH SCORE! 🏆" : ("Josh gobbled <b>" + score + "</b>. 🌈");
+    overScore.innerHTML = "🍆 Score <b>" + score + "</b> &nbsp;•&nbsp; 🏆 Best <b>" + highScore + "</b>";
     winScreen.classList.remove("hidden");
     hud.classList.add("hidden");
-    // big celebratory blast
-    for (let i = 0; i < 6; i++) burst(rand(0, W), rand(0, H));
+    for (let i = 0; i < 8; i++) burst(rand(0, W), rand(0, H), true);
     fanfare();
   }
 
@@ -471,12 +555,17 @@
   document.getElementById("againBtn").addEventListener("click", startGame);
 
   // ---- main loop ----
-  function loop() {
-    update();
+  let lastTs = 0;
+  function loop(ts) {
+    nowMs = ts || 0;
+    let dt = lastTs ? (nowMs - lastTs) / 1000 : 0;
+    lastTs = nowMs;
+    if (dt > 0.1) dt = 0.1; // clamp big gaps (e.g. tab was backgrounded)
+    update(dt);
     draw();
     requestAnimationFrame(loop);
   }
-  loop();
+  requestAnimationFrame(loop);
 })();
 </script>
 </body>
