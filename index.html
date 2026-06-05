@@ -197,6 +197,7 @@
   const CHARGE_NEEDED = 12;     // chomps to fill the meter and trigger a boost
   const SUPER_DURATION = 6;     // seconds of rainbow super-speed mode
   const SUPER_SPEED_MULT = 2.0; // speed multiplier while super
+  const SUPER_SCALE = 1.7;      // how much bigger Josh gets while super
   const FOOD_COUNT = 7;         // simultaneous items on screen
   const PLAYER_R = () => Math.max(26, Math.min(W, H) * 0.055);
   const FOOD_R = () => PLAYER_R() * 0.7;
@@ -221,6 +222,8 @@
   let highScore = 0;
   try { highScore = parseInt(localStorage.getItem("joshHighScore"), 10) || 0; } catch (e) {}
   function isSuper() { return nowMs < superUntil; }
+  // Josh's effective body radius — grows while super so he eats more at once
+  function bodyRadius() { return PLAYER_R() * (isSuper() ? SUPER_SCALE : 1); }
 
   function rand(a, b) { return a + Math.random() * (b - a); }
 
@@ -476,30 +479,33 @@
     // rainbow speed-trail while super
     if (sup && Math.random() < 0.9) burst(player.x, player.y, true);
 
-    // eat food
-    const pr = PLAYER_R(), fr = FOOD_R();
+    // eat food — generous hit radius (bigger while super, so he sweeps up
+    // several pieces at once)
+    const br = bodyRadius(), fr = FOOD_R();
+    const eatDist = br * 1.05 + fr * 0.5;
+    let ateCount = 0;
     for (let i = foods.length - 1; i >= 0; i--) {
       const f = foods[i];
       const d = Math.hypot(f.x - player.x, f.y - player.y);
-      if (d < pr * 0.8 + fr * 0.4) {
+      if (d < eatDist) {
         burst(f.x, f.y);
-        gagSound();
         foods.splice(i, 1);
         foods.push(spawnFood());
         score++;
+        ateCount++;
         if (!isSuper()) {
           charge++;
           if (charge >= CHARGE_NEEDED) triggerSuper();
         }
-        updateHUD();
       }
     }
+    if (ateCount > 0) { gagSound(); updateHUD(); }
 
     // avoid the girls — bumping one costs points
     for (let i = hazards.length - 1; i >= 0; i--) {
       const h = hazards[i];
       const d = Math.hypot(h.x - player.x, h.y - player.y);
-      if (d < pr * 0.8 + fr * 0.4) {
+      if (d < br * 0.8 + fr * 0.4) {
         score = Math.max(0, score - GIRL_PENALTY);
         charge = Math.max(0, charge - 1);
         hurtFlash = 1;
@@ -626,7 +632,7 @@
     if (sprite) {
       // draw the (background-knocked-out) sprite upright, flipped to face
       // the travel direction, with a subtle vertical "chomp" squash
-      const scale = sup ? 1.4 : 1;
+      const scale = sup ? SUPER_SCALE : 1;
       const size = r * 2.4 * scale;
       const squash = 1 - player.mouth * 0.08;
       ctx.scale(facing, squash);
