@@ -109,7 +109,7 @@
 
   <div id="titleScreen" class="overlay">
     <h1>SUPER&nbsp;GAY&nbsp;JOSH</h1>
-    <p>Chomp as much as you can before the clock runs out! 🍌🍆🌭</p>
+    <p>Chomp the 🍌🍆🌭 before the clock runs out — but <b>dodge the girls</b> 👩💃, they cost you points!</p>
     <p>Fill the <b>GAY-O-METER</b> to unleash <b>SUPER GAY MODE</b> — rainbow super-speed! 🌈⚡</p>
     <button id="startBtn" class="big">START CHOMPIN'</button>
     <p class="hint">⌨️ Arrow keys / WASD &nbsp;•&nbsp; 📱 swipe to steer &nbsp;•&nbsp; ⏱️ 30s rounds</p>
@@ -190,6 +190,9 @@
 
   // ---- game constants ----
   const FOODS = ["🍌", "🍆", "🌭", "🥒", "🌶️", "🍒", "🥖"];
+  const GIRLS = ["👩", "💃", "💋", "👠", "👱‍♀️", "💅"]; // hazards Josh must avoid
+  const HAZARD_COUNT = 2;       // girls on screen at once
+  const GIRL_PENALTY = 3;       // points lost for bumping a girl
   const ROUND_TIME = 30;        // seconds per round
   const CHARGE_NEEDED = 12;     // chomps to fill the meter and trigger a boost
   const SUPER_DURATION = 6;     // seconds of rainbow super-speed mode
@@ -204,7 +207,9 @@
   const player = { x: 0, y: 0, dx: 1, dy: 0, mouth: 0, mouthDir: 1, angle: 0 };
   let facing = 1; // 1 = facing right, -1 = facing left (for the sprite)
   let foods = [];
+  let hazards = [];
   let particles = [];
+  let hurtFlash = 0;    // red screen flash when a girl is touched (decays to 0)
   let score = 0;        // total chomps this round (the high-score metric)
   let charge = 0;       // progress toward the next SUPER GAY boost
   let timeLeft = ROUND_TIME;
@@ -229,13 +234,26 @@
     };
   }
 
+  function spawnHazard() {
+    const r = FOOD_R();
+    return {
+      x: rand(r, W - r),
+      y: rand(r + 60, H - r),
+      emoji: GIRLS[(Math.random() * GIRLS.length) | 0],
+      wob: rand(0, Math.PI * 2),
+    };
+  }
+
   function resetGame() {
     player.x = W / 2; player.y = H / 2;
     player.dx = 1; player.dy = 0; player.angle = 0;
     facing = 1;
     foods = [];
     for (let i = 0; i < FOOD_COUNT; i++) foods.push(spawnFood());
+    hazards = [];
+    for (let i = 0; i < HAZARD_COUNT; i++) hazards.push(spawnHazard());
     particles = [];
+    hurtFlash = 0;
     score = 0; charge = 0; timeLeft = ROUND_TIME; superUntil = 0; wasSuper = false;
     updateHUD();
   }
@@ -283,32 +301,146 @@
   //  Sound — tiny WebAudio blips, no external files
   // ====================================================================
   let audioCtx = null, soundOn = true;
+  let masterGain = null, musicGain = null, sfxGain = null;
   function ensureAudio() {
-    if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (!audioCtx) {
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioCtx.createGain(); masterGain.gain.value = soundOn ? 1 : 0;
+        masterGain.connect(audioCtx.destination);
+        musicGain = audioCtx.createGain(); musicGain.gain.value = 0.5; musicGain.connect(masterGain);
+        sfxGain = audioCtx.createGain();   sfxGain.gain.value = 0.9;   sfxGain.connect(masterGain);
+      } catch (e) {}
+    }
     if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
   }
-  function blip(freq, dur, type) {
-    if (!soundOn || !audioCtx) return;
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    o.type = type || "square";
-    o.frequency.value = freq;
-    g.gain.value = 0.06;
-    o.connect(g); g.connect(audioCtx.destination);
-    const now = audioCtx.currentTime;
-    g.gain.setValueAtTime(0.06, now);
-    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-    o.start(now); o.stop(now + dur);
+
+  // generic short tone
+  function tone(freq, t, dur, type, vol, dest) {
+    if (!audioCtx) return;
+    const out = dest || sfxGain || audioCtx.destination;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    o.connect(g); g.connect(out);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.start(t); o.stop(t + dur + 0.02);
+    return o;
   }
+
+  // reusable noise buffer for percussive / throaty effects
+  let noiseBuf = null;
+  function noiseBurst(t, dur, freq, q, vol) {
+    if (!audioCtx) return;
+    if (!noiseBuf) {
+      const n = (audioCtx.sampleRate * 0.4) | 0;
+      noiseBuf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const src = audioCtx.createBufferSource(); src.buffer = noiseBuf;
+    const bp = audioCtx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = freq; bp.Q.value = q || 1;
+    const g = audioCtx.createGain();
+    src.connect(bp); bp.connect(g); g.connect(sfxGain || audioCtx.destination);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.start(t); src.stop(t + dur + 0.02);
+  }
+
+  // EAT: a quick comedic "gag / gulp" — two throaty glugs sliding down in pitch
+  function gagSound() {
+    if (!soundOn || !audioCtx) return;
+    const t = audioCtx.currentTime;
+    for (let k = 0; k < 2; k++) {
+      const tt = t + k * 0.085;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(300, tt);
+      o.frequency.exponentialRampToValueAtTime(70, tt + 0.07);
+      const lp = audioCtx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 900;
+      o.connect(lp); lp.connect(g); g.connect(sfxGain || audioCtx.destination);
+      g.gain.setValueAtTime(0.0001, tt);
+      g.gain.exponentialRampToValueAtTime(0.5, tt + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, tt + 0.08);
+      o.start(tt); o.stop(tt + 0.1);
+      noiseBurst(tt, 0.06, 500, 0.7, 0.25);
+    }
+  }
+
+  // HIT GIRL: a low descending "wrong" buzzer
+  function buzzer() {
+    if (!soundOn || !audioCtx) return;
+    const t = audioCtx.currentTime;
+    tone(196, t, 0.18, "square", 0.4);
+    tone(146, t + 0.12, 0.26, "square", 0.4);
+  }
+
+  // SUPER GAY: a goofy comedic "moan" — vocal-style pitch slide with vibrato
+  function moan() {
+    if (!soundOn || !audioCtx) return;
+    const t = audioCtx.currentTime, dur = 1.4;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(180, t);
+    o.frequency.linearRampToValueAtTime(330, t + 0.5);
+    o.frequency.linearRampToValueAtTime(255, t + 1.0);
+    o.frequency.linearRampToValueAtTime(360, t + dur);
+    const lfo = audioCtx.createOscillator(), lfoG = audioCtx.createGain();
+    lfo.frequency.value = 6; lfoG.gain.value = 14;
+    lfo.connect(lfoG); lfoG.connect(o.frequency);
+    const bp = audioCtx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 720; bp.Q.value = 4;
+    o.connect(bp); bp.connect(g); g.connect(sfxGain || audioCtx.destination);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.12);
+    g.gain.setValueAtTime(0.5, t + dur - 0.3);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.start(t); o.stop(t + dur + 0.05);
+    lfo.start(t); lfo.stop(t + dur + 0.05);
+  }
+
   function fanfare() {
     if (!soundOn || !audioCtx) return;
-    const notes = [523, 659, 784, 1047, 784, 1047, 1319];
-    notes.forEach((f, i) => setTimeout(() => blip(f, 0.22, "triangle"), i * 130));
+    const t = audioCtx.currentTime;
+    [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) =>
+      tone(f, t + i * 0.1, 0.2, "triangle", 0.4));
   }
+
+  // ---- looping background music (simple chiptune; faster + brighter while super) ----
+  const CHORDS = [
+    { root: 0,  arp: [0, 4, 7, 12] },   // C
+    { root: 7,  arp: [7, 11, 14, 19] }, // G
+    { root: 9,  arp: [9, 12, 16, 21] }, // Am
+    { root: 5,  arp: [5, 9, 12, 17] },  // F
+  ];
+  function semi(s) { return 261.63 * Math.pow(2, s / 12); }
+  let musicTimer = null, musicStep = 0, nextNoteT = 0;
+  function startMusic() {
+    if (!audioCtx || musicTimer) return;
+    musicStep = 0; nextNoteT = audioCtx.currentTime + 0.1;
+    musicTimer = setInterval(musicScheduler, 25);
+  }
+  function stopMusic() { if (musicTimer) { clearInterval(musicTimer); musicTimer = null; } }
+  function musicScheduler() {
+    if (!audioCtx) return;
+    const stepDur = isSuper() ? 0.10 : 0.16;
+    while (nextNoteT < audioCtx.currentTime + 0.12) {
+      const i = musicStep % 16;
+      const ch = CHORDS[(i / 4) | 0];
+      if (i % 2 === 0) tone(semi(ch.root - 12), nextNoteT, 0.22, "triangle", 0.5, musicGain); // bass
+      const lead = ch.arp[i % 4];
+      tone(semi(lead), nextNoteT, stepDur * 0.9, "square", isSuper() ? 0.5 : 0.32, musicGain);
+      if (isSuper()) tone(semi(lead + 12), nextNoteT, stepDur * 0.8, "square", 0.3, musicGain);
+      nextNoteT += stepDur;
+      musicStep++;
+    }
+  }
+
   document.getElementById("soundBtn").addEventListener("click", () => {
     soundOn = !soundOn;
     document.getElementById("soundBtn").textContent = soundOn ? "🔊" : "🔇";
     ensureAudio();
+    if (masterGain) masterGain.gain.value = soundOn ? 1 : 0;
   });
 
   // ====================================================================
@@ -351,7 +483,7 @@
       const d = Math.hypot(f.x - player.x, f.y - player.y);
       if (d < pr * 0.8 + fr * 0.4) {
         burst(f.x, f.y);
-        blip(440 + score * 6, 0.12, "square");
+        gagSound();
         foods.splice(i, 1);
         foods.push(spawnFood());
         score++;
@@ -362,6 +494,26 @@
         updateHUD();
       }
     }
+
+    // avoid the girls — bumping one costs points
+    for (let i = hazards.length - 1; i >= 0; i--) {
+      const h = hazards[i];
+      const d = Math.hypot(h.x - player.x, h.y - player.y);
+      if (d < pr * 0.8 + fr * 0.4) {
+        score = Math.max(0, score - GIRL_PENALTY);
+        charge = Math.max(0, charge - 1);
+        hurtFlash = 1;
+        buzzer();
+        for (let k = 0; k < 10; k++) {
+          const a = Math.random() * Math.PI * 2, s = rand(1, 4);
+          particles.push({ x: h.x, y: h.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1, life: 1, col: "#aab", sz: rand(3, 7) });
+        }
+        hazards.splice(i, 1);
+        hazards.push(spawnHazard());
+        updateHUD();
+      }
+    }
+    if (hurtFlash > 0) hurtFlash = Math.max(0, hurtFlash - dt * 2.2);
 
     // refresh the meter the instant super-speed wears off
     if (wasSuper && !isSuper()) updateHUD();
@@ -435,6 +587,17 @@
       ctx.restore();
     });
 
+    // hazards (girls to avoid) — ringed in warning red
+    hazards.forEach((h) => {
+      h.wob += 0.05;
+      ctx.save();
+      ctx.translate(h.x, h.y + Math.sin(h.wob) * 4);
+      ctx.beginPath(); ctx.arc(0, 0, fr * 1.05, 0, 7);
+      ctx.strokeStyle = "rgba(255,45,45,0.9)"; ctx.lineWidth = 3; ctx.stroke();
+      ctx.fillText(h.emoji, 0, 0);
+      ctx.restore();
+    });
+
     // particles
     particles.forEach((p) => {
       ctx.globalAlpha = Math.max(0, p.life);
@@ -445,6 +608,12 @@
 
     // player
     drawPlayer();
+
+    // red damage flash when a girl was touched
+    if (hurtFlash > 0) {
+      ctx.fillStyle = "rgba(255,0,0," + (0.4 * hurtFlash) + ")";
+      ctx.fillRect(0, 0, W, H);
+    }
   }
 
   function drawPlayer() {
@@ -521,6 +690,7 @@
     superUntil = nowMs + SUPER_DURATION * 1000;
     flashBanner("🌈 SUPER GAY JOSH! 🌈");
     fanfare();
+    moan();
     for (let i = 0; i < 10; i++) burst(player.x, player.y, true);
     updateHUD();
   }
@@ -532,11 +702,13 @@
     titleScreen.classList.add("hidden");
     winScreen.classList.add("hidden");
     hud.classList.remove("hidden");
+    startMusic();
   }
 
   function gameOver() {
     state = "over";
     superUntil = 0;
+    stopMusic();
     const isBest = score > highScore;
     if (isBest) {
       highScore = score;
