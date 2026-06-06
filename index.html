@@ -205,6 +205,7 @@
   const EGGPLANT_COUNT = 10;    // eggplants in the bonus ring
   const BONUS_CLOCK_BONUS = 3;  // seconds added by catching a ⏰ in the bonus round
   const BONUS_CLOCK_CHANCE = 0.16; // chance a launched bonus object is a clock
+  const BONUS_GIRL_CHANCE = 0.10;  // chance a launched bonus object is a woman (dodge her!)
   const SUPER_CLOCK_BONUS = 5;  // a clock eaten during SUPER GAY MODE is worth more
   const FOOD_COUNT = 7;         // simultaneous items on screen
   const PLAYER_R = () => Math.max(26, Math.min(W, H) * 0.055);
@@ -223,6 +224,7 @@
   let clockTimer = 0;   // countdown to the next clock spawn
   let floatTexts = [];  // little "+3s" / "+5" popups
   let cameFromBonus = false;
+  let bonusBusted = false;
   // bonus scene
   let bonusLeft = 0, bonusAngle = 0, bonusSpin = 0;
   let droplets = [], eggRing = [], dropTimer = 0, moanTimer = 0;
@@ -289,7 +291,7 @@
     for (let i = 0; i < HAZARD_COUNT; i++) hazards.push(spawnHazard());
     particles = [];
     hurtFlash = 0;
-    clocks = []; clockTimer = rand(2, 4.5); floatTexts = []; droplets = []; bonusSpin = 0; cameFromBonus = false;
+    clocks = []; clockTimer = rand(2, 4.5); floatTexts = []; droplets = []; bonusSpin = 0; cameFromBonus = false; bonusBusted = false;
     score = 0; charge = 0; timeLeft = ROUND_TIME; superUntil = 0; wasSuper = false;
     updateHUD();
   }
@@ -618,7 +620,10 @@
     dropTimer -= dt;
     if (dropTimer <= 0) {
       const a = eggRing[(Math.random() * eggRing.length) | 0];
-      spawnDroplet(a, Math.random() < BONUS_CLOCK_CHANCE ? "clock" : "drop");
+      const roll = Math.random();
+      const kind = roll < BONUS_GIRL_CHANCE ? "girl"
+                 : roll < BONUS_GIRL_CHANCE + BONUS_CLOCK_CHANCE ? "clock" : "drop";
+      spawnDroplet(a, kind);
       dropTimer = rand(0.22, 0.5);
     }
 
@@ -629,6 +634,15 @@
       if (Math.hypot(dp.x - cx, dp.y - cy) < catchR) {
         if (Math.abs(angDiff(bonusAngle, dp.srcAngle)) < 0.7) {   // mouth aimed at it → caught
           const fx = cx + Math.cos(dp.srcAngle) * catchR, fy = cy + Math.sin(dp.srcAngle) * catchR;
+          if (dp.kind === "girl") {                               // 🙅 caught a woman → bonus over!
+            droplets.splice(i, 1);
+            bonusBusted = true;
+            hurtFlash = 1;
+            buzzer();
+            flashBanner("🙅 A WOMAN?! 🙅");
+            gameOver();
+            return;
+          }
           if (dp.kind === "clock") {                              // ⏰ → more time
             bonusLeft += BONUS_CLOCK_BONUS;
             floatText(fx, fy, "+" + BONUS_CLOCK_BONUS + "s", "#7CFC00");
@@ -832,6 +846,15 @@
         ctx.fillText("⏰", dp.x, dp.y);
         return;
       }
+      if (dp.kind === "girl") {                 // dodge her! (red warning ring)
+        ctx.save();
+        ctx.translate(dp.x, dp.y);
+        ctx.beginPath(); ctx.arc(0, 0, FOOD_R(), 0, 7);
+        ctx.strokeStyle = "rgba(255,45,45,0.95)"; ctx.lineWidth = 3; ctx.stroke();
+        ctx.fillText("👩", 0, 0);
+        ctx.restore();
+        return;
+      }
       ctx.save();
       ctx.translate(dp.x, dp.y);
       ctx.rotate(Math.atan2(dp.vy, dp.vx) + Math.PI / 2);
@@ -918,6 +941,7 @@
     state = "bonus";
     cameFromBonus = true;
     bonusLeft = BONUS_TIME;
+    bonusBusted = false;
     bonusAngle = -Math.PI / 2; bonusSpin = 0;
     droplets = []; dropTimer = 0; moanTimer = 0; pointerActive = false;
     eggRing = [];
@@ -948,9 +972,10 @@
       highScore = score;
       try { localStorage.setItem("joshHighScore", String(highScore)); } catch (e) {}
     }
-    overTitle.textContent = cameFromBonus ? "FABULOUS FINISH!" : "TIME'S UP!";
+    overTitle.textContent = bonusBusted ? "BUSTED!" : (cameFromBonus ? "FABULOUS FINISH!" : "TIME'S UP!");
     overMsg.innerHTML = isBest ? "🏆 NEW HIGH SCORE! 🏆"
-      : (cameFromBonus ? "Josh went all the way! 💦🌈" : ("Josh gobbled <b>" + score + "</b>. 🌈"));
+      : (bonusBusted ? "A woman snuck in — bonus over! 🙅‍♂️"
+      : (cameFromBonus ? "Josh went all the way! 💦🌈" : ("Josh gobbled <b>" + score + "</b>. 🌈")));
     overScore.innerHTML = "🍆 Score <b>" + score + "</b> &nbsp;•&nbsp; 🏆 Best <b>" + highScore + "</b>";
     winScreen.classList.remove("hidden");
     hud.classList.add("hidden");
