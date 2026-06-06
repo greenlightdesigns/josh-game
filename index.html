@@ -965,6 +965,9 @@
   let lastTs = 0;
   function loop(ts) {
     nowMs = ts || 0;
+    // keep the canvas locked to the live viewport — mobile address bars and
+    // late layout can otherwise leave W/H stale and squash everything
+    if (W !== window.innerWidth || H !== window.innerHeight) resize();
     let dt = lastTs ? (nowMs - lastTs) / 1000 : 0;
     lastTs = nowMs;
     if (dt > 0.1) dt = 0.1; // clamp big gaps (e.g. tab was backgrounded)
