@@ -203,6 +203,9 @@
   const BONUS_TIME = 10;        // seconds of the bonus scene
   const BONUS_CATCH = 5;        // points per droplet caught
   const EGGPLANT_COUNT = 10;    // eggplants in the bonus ring
+  const BONUS_CLOCK_BONUS = 3;  // seconds added by catching a ⏰ in the bonus round
+  const BONUS_CLOCK_CHANCE = 0.16; // chance a launched bonus object is a clock
+  const SUPER_CLOCK_BONUS = 5;  // a clock eaten during SUPER GAY MODE is worth more
   const FOOD_COUNT = 7;         // simultaneous items on screen
   const PLAYER_R = () => Math.max(26, Math.min(W, H) * 0.055);
   const FOOD_R = () => PLAYER_R() * 0.7;
@@ -268,12 +271,12 @@
     return { x: rand(r, W - r), y: rand(r + 60, H - r), emoji: "⏰", wob: rand(0, 6.28), life: 6 };
   }
 
-  function spawnDroplet(a) {
+  function spawnDroplet(a, kind) {
     const cx = W / 2, cy = H / 2, R = ringRadius();
     const sx = cx + Math.cos(a) * R, sy = cy + Math.sin(a) * R;
     const sp = Math.min(W, H) * 0.34;            // px/sec toward the centre
     const len = Math.hypot(cx - sx, cy - sy) || 1;
-    droplets.push({ x: sx, y: sy, vx: (cx - sx) / len * sp, vy: (cy - sy) / len * sp, srcAngle: a });
+    droplets.push({ x: sx, y: sy, vx: (cx - sx) / len * sp, vy: (cy - sy) / len * sp, srcAngle: a, kind: kind || "drop" });
   }
 
   function resetGame() {
@@ -286,7 +289,7 @@
     for (let i = 0; i < HAZARD_COUNT; i++) hazards.push(spawnHazard());
     particles = [];
     hurtFlash = 0;
-    clocks = []; clockTimer = rand(3, 6); floatTexts = []; droplets = []; bonusSpin = 0; cameFromBonus = false;
+    clocks = []; clockTimer = rand(2, 4.5); floatTexts = []; droplets = []; bonusSpin = 0; cameFromBonus = false;
     score = 0; charge = 0; timeLeft = ROUND_TIME; superUntil = 0; wasSuper = false;
     updateHUD();
   }
@@ -511,7 +514,7 @@
 
     // ⏰ time-bonus clocks — occasional and fleeting
     clockTimer -= dt;
-    if (clockTimer <= 0 && clocks.length === 0) { clocks.push(spawnClock()); clockTimer = rand(5, 9); }
+    if (clockTimer <= 0 && clocks.length === 0) { clocks.push(spawnClock()); clockTimer = rand(3.5, 6.5); }
     for (let i = clocks.length - 1; i >= 0; i--) { clocks[i].life -= dt; if (clocks[i].life <= 0) clocks.splice(i, 1); }
 
     const sup = isSuper();
@@ -560,9 +563,10 @@
     for (let i = clocks.length - 1; i >= 0; i--) {
       const c = clocks[i];
       if (Math.hypot(c.x - player.x, c.y - player.y) < eatDist) {
-        timeLeft += CLOCK_BONUS;
+        const add = isSuper() ? SUPER_CLOCK_BONUS : CLOCK_BONUS;
+        timeLeft += add;
         ding();
-        floatText(c.x, c.y, "+" + CLOCK_BONUS + "s", "#7CFC00");
+        floatText(c.x, c.y, "+" + add + "s", "#7CFC00");
         for (let k = 0; k < 10; k++) { const a = Math.random() * 6.28, s = rand(1, 4); particles.push({ x: c.x, y: c.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1, life: 1, col: "#7CFC00", sz: rand(3, 7) }); }
         clocks.splice(i, 1);
         updateHUD();
@@ -612,7 +616,11 @@
 
     // eggplants fire white droplets at the centre
     dropTimer -= dt;
-    if (dropTimer <= 0) { spawnDroplet(eggRing[(Math.random() * eggRing.length) | 0]); dropTimer = rand(0.22, 0.5); }
+    if (dropTimer <= 0) {
+      const a = eggRing[(Math.random() * eggRing.length) | 0];
+      spawnDroplet(a, Math.random() < BONUS_CLOCK_CHANCE ? "clock" : "drop");
+      dropTimer = rand(0.22, 0.5);
+    }
 
     const cx = W / 2, cy = H / 2, catchR = PLAYER_R() * 1.5;
     for (let i = droplets.length - 1; i >= 0; i--) {
@@ -620,11 +628,17 @@
       dp.x += dp.vx * dt; dp.y += dp.vy * dt;
       if (Math.hypot(dp.x - cx, dp.y - cy) < catchR) {
         if (Math.abs(angDiff(bonusAngle, dp.srcAngle)) < 0.7) {   // mouth aimed at it → caught
-          score += BONUS_CATCH;
-          floatText(cx + Math.cos(dp.srcAngle) * catchR, cy + Math.sin(dp.srcAngle) * catchR, "+" + BONUS_CATCH, "#fff");
+          const fx = cx + Math.cos(dp.srcAngle) * catchR, fy = cy + Math.sin(dp.srcAngle) * catchR;
+          if (dp.kind === "clock") {                              // ⏰ → more time
+            bonusLeft += BONUS_CLOCK_BONUS;
+            floatText(fx, fy, "+" + BONUS_CLOCK_BONUS + "s", "#7CFC00");
+          } else {                                                // 💦 → points
+            score += BONUS_CATCH;
+            floatText(fx, fy, "+" + BONUS_CATCH, "#fff");
+            updateHUD();
+          }
           for (let k = 0; k < 10; k++) burst(dp.x, dp.y, true);
           ding();
-          updateHUD();
         } else {                                                  // missed → little splash
           for (let k = 0; k < 5; k++) { const a = Math.random() * 6.28, s = rand(1, 3); particles.push({ x: dp.x, y: dp.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, col: "#eef", sz: rand(2, 5) }); }
         }
@@ -811,8 +825,13 @@
     ctx.font = (FOOD_R() * 2.1) + "px serif";
     eggRing.forEach((a) => ctx.fillText("🍆", cx + Math.cos(a) * R, cy + Math.sin(a) * R));
 
-    // white droplets flying inward
+    // white droplets (and the occasional ⏰) flying inward
+    ctx.font = (FOOD_R() * 1.7) + "px serif";
     droplets.forEach((dp) => {
+      if (dp.kind === "clock") {
+        ctx.fillText("⏰", dp.x, dp.y);
+        return;
+      }
       ctx.save();
       ctx.translate(dp.x, dp.y);
       ctx.rotate(Math.atan2(dp.vy, dp.vx) + Math.PI / 2);
